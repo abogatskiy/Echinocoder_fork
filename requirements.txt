@@ -1,5 +1,0 @@
-sympy
-numpy >= 2.0.0
-iwpc >= 0.3.5
-pytest
-# drawsvg ~= 2.0
