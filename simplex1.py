@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Self, Any, Tuple
 import hashlib
 from tools import sort_np_array_rows_lexicographically
-from MultisetEmbedder import MultisetEmbedder
+from np_MultisetEmbedder import MultisetEmbedder
 
 class Embedder(MultisetEmbedder):
     """

@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Self, Any
 import hashlib
 from tools import sort_np_array_rows_lexicographically, sort_each_np_array_column
-from MultisetEmbedder import MultisetEmbedder
+from np_MultisetEmbedder import MultisetEmbedder
 
 @dataclass
 class Maximal_Simplex_Vertex:
@@ -81,7 +81,6 @@ class Eji_LinComb:
         ans._index = self._index
         ans._eji_counts = sort_np_array_rows_lexicographically(self._eji_counts)
         return ans
-
 class Embedder(MultisetEmbedder):
     """
     Embedder class for batched permutation-invariant encoding of vector sets.
@@ -109,6 +108,9 @@ class Embedder(MultisetEmbedder):
             embedding: Array of shape (b, embedding_dim)
             metadata: Additional information for each batch element
         """
+        import time
+        start_time = time.time()
+        
         assert MultisetEmbedder.is_generic_data(data)  # Precondition
         b, n, k = data.shape
         
@@ -117,35 +119,38 @@ class Embedder(MultisetEmbedder):
         result = np.zeros((b, embed_dim), dtype=np.float64)
         all_metadata = []
         
+        init_time = time.time()
+        print(f"Initialization time: {init_time - start_time:.4f} seconds")
+        
         # Process each batch item separately
         for batch_idx in range(b):
+            batch_start = time.time()
             batch_data = data[batch_idx]
             
             # The ascending data has the x-components in ascending order, the y-components in ascending order, etc.
+            t1 = time.time()
             ascending_data = sort_each_np_array_column(batch_data)
-            
-            # Extract min elements
             min_elements = ascending_data[0]
+            print(f"Sorting time: {time.time() - t1:.4f} seconds")
             
-            # Flatten data separated by component
+            # Flatten and sort data
+            t2 = time.time()
             flattened_data_separated_by_cpt = [
                 [(batch_data[j][i], (j, i)) for j in range(n)] 
                 for i in range(k)
             ]
-            
-            # Sort data by component in descending order
             sorted_data_separated_by_cpt = [
                 sorted(cpt, key=lambda x: -x[0]) 
                 for cpt in flattened_data_separated_by_cpt
             ]
+            print(f"Flattening and sorting time: {time.time() - t2:.4f} seconds")
             
-            # Calculate pairwise differences between adjacent sorted elements
+            # Calculate differences and construct MSVs
+            t3 = time.time()
             difference_data_by_cpt = [
                 [(x[0] - y[0], x[1]) for x, y in pairwise(cpt)] 
                 for cpt in sorted_data_separated_by_cpt
             ]
-            
-            # Construct Maximal Simplex Vertices
             difference_data_with_MSVs_by_cpt = [
                 [
                     (delta, Maximal_Simplex_Vertex({eji for _, eji in cpt[0:i + 1]})) 
@@ -153,68 +158,66 @@ class Embedder(MultisetEmbedder):
                 ]
                 for cpt in difference_data_by_cpt
             ]
+            print(f"Difference and MSV construction time: {time.time() - t3:.4f} seconds")
             
-            # Flatten the difference data
+            # Flatten and sort difference data
+            t4 = time.time()
             difference_data_with_MSVs = [
                 item for cpt in difference_data_with_MSVs_by_cpt for item in cpt
             ]
-            
-            # Sort by delta values in descending order
             sorted_difference_data_with_MSVs = sorted(
                 difference_data_with_MSVs, key=lambda x: -x[0]
             )
-            
-            # Extract deltas and MSVs in current order
             deltas_in_current_order = [delta for delta, _ in sorted_difference_data_with_MSVs]
             msvs_in_current_order = [msv for _, msv in sorted_difference_data_with_MSVs]
+            print(f"Difference data sorting time: {time.time() - t4:.4f} seconds")
             
             expected_number_of_vertices = n * k - k
             assert len(deltas_in_current_order) == expected_number_of_vertices
             assert len(msvs_in_current_order) == expected_number_of_vertices
             
-            # Calculate barycentric subdivision coordinates
+            # Calculate barycentric coordinates and get canonical form
+            t5 = time.time()
             difference_data_in_subdivided_simplex = [
                 ((i + 1) * (deltas_in_current_order[i] - 
                     (deltas_in_current_order[i + 1] if i + 1 < expected_number_of_vertices else 0)),
                  Eji_LinComb(n, k, msvs_in_current_order[:i + 1])) 
                 for i in range(expected_number_of_vertices)
             ]
-            
-            # Get canonical form of difference data
             canonical_difference_data = [
                 (delta, msv.get_canonical_form()) 
                 for (delta, msv) in difference_data_in_subdivided_simplex
             ]
+            print(f"Barycentric coordinates time: {time.time() - t5:.4f} seconds")
             
-            # Calculate embedding dimension
+            # Calculate final embedding
+            t6 = time.time()
             bigN = 2 * (n - 1) * k + 1
-            
-            # Map to points in unit hypercube and compute embedding
             difference_point_pairs = [
                 (delta, eji_lin_com.hash_to_point_in_unit_hypercube(bigN)) 
                 for (delta, eji_lin_com) in canonical_difference_data
             ]
-            
             second_part_of_embedding = sum(
                 [delta * point for delta, point in difference_point_pairs]
             ) + np.zeros(bigN)
             
-            # Assemble the full embedding
             embedding = np.zeros(embed_dim, dtype=np.float64)
             embedding[:k] = min_elements
             embedding[k:k + bigN] = second_part_of_embedding
             
             result[batch_idx] = embedding
+            print(f"Final embedding calculation time: {time.time() - t6:.4f} seconds")
             
-            # Store metadata for this batch element
             metadata = {
                 "ascending_data": ascending_data,
                 "input_data": batch_data,
             }
             all_metadata.append(metadata)
+            
+            print(f"Total batch {batch_idx} time: {time.time() - batch_start:.4f} seconds")
         
+        print(f"Total execution time: {time.time() - start_time:.4f} seconds")
         return result, all_metadata
-
     def size_from_n_k_generic(self, n: int, k: int) -> int:
         """Calculate embedding dimension from n and k"""
         return 2 * n * k + 1 - k
